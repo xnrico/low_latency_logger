@@ -1,7 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <typeinfo>
@@ -13,76 +16,34 @@ namespace ricox {
 
 template <typename Derived>
 class logger {
+   private:
+	auto flush() -> void;
+
+	auto push_value(const log_entry& entry) noexcept -> void;
+	auto push_value(const char value) noexcept -> void;
+	auto push_value(const char* value) noexcept -> void;
+	auto push_value(const std::string& value) noexcept -> void;
+	auto push_value(const int value) noexcept -> void;
+	auto push_value(const long value) noexcept -> void;
+	auto push_value(const long long value) noexcept -> void;
+	auto push_value(const unsigned int value) noexcept -> void;
+	auto push_value(const unsigned long value) noexcept -> void;
+	auto push_value(const unsigned long long value) noexcept -> void;
+	auto push_value(const float value) noexcept -> void;
+	auto push_value(const double value) noexcept -> void;
+
    protected:
 	lf_queue<log_entry> queue;
 	std::thread worker_thread;
 	std::atomic<bool> is_running;
-
-	auto flush_queue() -> void {}
-
-	auto flush() -> void { reinterpret_cast<Derived*>(this)->flush_queue(); }
-
-	auto push_value(const log_entry& entry) noexcept -> void {
-		if (!queue.push(entry)) std::cerr << "Logger queue is full, dropping log entry.\n";
-	}
-
-	auto push_value(const char value) noexcept -> void { push_value(log_entry{log_type::CHAR, {.c = value}}); }
-
-	auto push_value(const char* value) noexcept -> void {
-		while (*value) {
-			push_value(*value);
-			++value;
-		}
-	}
-
-	auto push_value(const std::string& value) noexcept -> void { push_value(value.c_str()); }
-
-	auto push_value(const int value) noexcept -> void { push_value(log_entry{log_type::INTEGER, {.i = value}}); }
-
-	auto push_value(const long value) noexcept -> void { push_value(log_entry{log_type::LONG_INTEGER, {.l = value}}); }
-
-	auto push_value(const long long value) noexcept -> void {
-		push_value(log_entry{log_type::LONG_LONG_INTEGER, {.ll = value}});
-	}
-
-	auto push_value(const unsigned int value) noexcept -> void {
-		push_value(log_entry{log_type::UNSIGNED_INTEGER, {.ui = value}});
-	}
-
-	auto push_value(const unsigned long value) noexcept -> void {
-		push_value(log_entry{log_type::UNSIGNED_LONG_INTEGER, {.ul = value}});
-	}
-
-	auto push_value(const unsigned long long value) noexcept -> void {
-		push_value(log_entry{log_type::UNSIGNED_LONG_LONG_INTEGER, {.ull = value}});
-	}
-
-	auto push_value(const float value) noexcept -> void { push_value(log_entry{log_type::FLOAT, {.f = value}}); }
-
-	auto push_value(const double value) noexcept -> void { push_value(log_entry{log_type::DOUBLE, {.d = value}}); }
-
-	auto destroy() -> void {
-		// Give some time for remaining entries to be processed
-		auto timeout = std::chrono::steady_clock::now() + std::chrono::seconds{2};
-		while (!queue.empty() && std::chrono::steady_clock::now() < timeout) {
-			std::this_thread::sleep_for(std::chrono::milliseconds{10});
-		}
-
-		is_running.store(false, std::memory_order_release);
-		if (worker_thread.joinable()) worker_thread.join();
-		std::cerr << "Logger thread has been stopped\n";
-	}
+	
+	auto flush_queue() -> void;
+	auto destroy() -> void;
 
    public:
-	explicit logger(size_t queue_size) : queue{queue_size}, is_running{false} {
-		is_running.store(true, std::memory_order_release);
-		auto thread = std::move(create_and_start_thread(-1, "logger", [this]() -> void { flush(); }));
-		if (!thread.has_value()) throw std::runtime_error("Failed to start logger thread");
-		worker_thread = std::move(thread.value());
-	}
-
-	logger() : logger(LOG_QUEUE_SIZE) {}
-	~logger() {}
+	explicit logger(size_t queue_size);
+	logger();
+	~logger();
 
 	logger(const logger&) = delete;
 	logger(logger&&) = delete;
@@ -108,67 +69,16 @@ class logger {
 		// Extra elements
 	}
 
-	auto log(const char* s) noexcept -> void {
-		while (*s) {
-			if (*s == '%') {
-				if (*(s + 1) == '%') [[unlikely]] {
-					++s;
-				} else {
-					std::cerr << "Logger: Missing value for format specifier.\n";
-					return;
-				}
-			}
-			push_value(*s++);
-		}
-	}
+	auto log(const char* s) noexcept -> void;
 };
 
 class stdout_logger final : public logger<stdout_logger> {
    private:
-	auto flush_queue() -> void {
-		while (is_running.load(std::memory_order_acquire)) {
-			while (!queue.empty()) {
-				auto entry = queue.pop();
-				if (!entry.has_value()) continue;
-				const auto& log = entry.value();
-				switch (log.type) {
-					case log_type::CHAR:
-						std::cout << log.value.c;
-						break;
-					case log_type::INTEGER:
-						std::cout << log.value.i;
-						break;
-					case log_type::LONG_INTEGER:
-						std::cout << log.value.l;
-						break;
-					case log_type::LONG_LONG_INTEGER:
-						std::cout << log.value.ll;
-						break;
-					case log_type::UNSIGNED_INTEGER:
-						std::cout << log.value.ui;
-						break;
-					case log_type::UNSIGNED_LONG_INTEGER:
-						std::cout << log.value.ul;
-						break;
-					case log_type::UNSIGNED_LONG_LONG_INTEGER:
-						std::cout << log.value.ull;
-						break;
-					case log_type::FLOAT:
-						std::cout << log.value.f;
-						break;
-					case log_type::DOUBLE:
-						std::cout << log.value.d;
-						break;
-				}
-			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds{1});
-		}
-	}
+	auto flush_queue() -> void;
 
    public:
-	explicit stdout_logger() : logger<stdout_logger>{} {}
-	~stdout_logger() { destroy(); }
+	explicit stdout_logger();
+	~stdout_logger();
 
 	stdout_logger(const stdout_logger&) = delete;
 	stdout_logger(stdout_logger&&) = delete;
@@ -183,57 +93,11 @@ class file_logger final : public logger<file_logger> {
 	const std::string file_name;
 	std::ofstream file;
 
-	auto flush_queue() -> void {
-		while (is_running.load(std::memory_order_acquire)) {
-			while (!queue.empty()) {
-				auto entry = queue.pop();
-				if (!entry.has_value()) continue;
-				const auto& log = entry.value();
-				switch (log.type) {
-					case log_type::CHAR:
-						file << log.value.c;
-						break;
-					case log_type::INTEGER:
-						file << log.value.i;
-						break;
-					case log_type::LONG_INTEGER:
-						file << log.value.l;
-						break;
-					case log_type::LONG_LONG_INTEGER:
-						file << log.value.ll;
-						break;
-					case log_type::UNSIGNED_INTEGER:
-						file << log.value.ui;
-						break;
-					case log_type::UNSIGNED_LONG_INTEGER:
-						file << log.value.ul;
-						break;
-					case log_type::UNSIGNED_LONG_LONG_INTEGER:
-						file << log.value.ull;
-						break;
-					case log_type::FLOAT:
-						file << log.value.f;
-						break;
-					case log_type::DOUBLE:
-						file << log.value.d;
-						break;
-				}
-			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds{1});
-		}
-	}
+	auto flush_queue() -> void;
 
    public:
-	explicit file_logger(const std::string& file_name) : logger<file_logger>{}, file_name{file_name} {
-		file.open(file_name, std::ios::out | std::ios::app);
-		if (!file.is_open()) throw std::runtime_error("Failed to open log file: " + file_name);
-	}
-
-	~file_logger() {
-		destroy();
-		if (file.is_open()) file.close();
-	}
+	explicit file_logger(const std::string& file_name);
+	~file_logger();
 
 	file_logger() = delete;
 	file_logger(const file_logger&) = delete;
@@ -243,5 +107,7 @@ class file_logger final : public logger<file_logger> {
 
 	friend class logger<file_logger>;  // Allow logger to access private members
 };
+
+#include "logger.tpp"
 
 }  // namespace ricox

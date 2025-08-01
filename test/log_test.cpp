@@ -1,10 +1,11 @@
 #include "logger.hpp"
 #include <thread>
+
 #include <chrono>
 
 auto main(int argc, char** argv) -> int {
     ricox::stdout_logger logger;
-    ricox::file_logger file_logger{"mylog.txt"};
+    ricox::file_logger file_logger{"logs/mylog.log"};
 
     // Simulate some logging
     logger.log("Logging a float: % and a double: %\n", 3.14159f, 2.718281828459045);
